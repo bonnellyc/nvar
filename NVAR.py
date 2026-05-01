@@ -28,7 +28,12 @@ class NVAR:
         if not self.is_initialised:
             raise AttributeError("n_linear_features is unknown before fit(X).")
 
-        return self.delay * len(self.strides) * self.n_dims_input
+        return len(self._lags) * self.n_dims_input
+
+    @property
+    def _lags(self):
+        # liste de lags unique, aucune duplication de features
+        return sorted({d * stride for d in range(self.delay) for stride in self.strides})
 
     def _linear_features_at(self, X:np.ndarray, t:int):
         """
@@ -37,11 +42,9 @@ class NVAR:
         return : z(t) = [x(t), x(t-tau), ..., x(t-delay*tau)]
         """
         features = []
-        # creer le vecteur composé de self.delay termes, séparé par self.strides timesteps
-        for d in range(self.delay):
-            for stride in self.strides:
-                lag = d * stride
-                features.append(X[:, t-lag])
+        # Multi-stride lag grid, with duplicates removed.
+        for lag in self._lags:
+            features.append(X[:, t-lag])
         
         return np.concatenate(features)
     
@@ -67,11 +70,9 @@ class NVAR:
             )
 
         names = []
-        for d in range(self.delay):
-            for stride in self.strides:
-                lag = d * stride
-                for channel_name in channel_names:
-                    names.append(self._format_lagged_name(channel_name, lag))
+        for lag in self._lags:
+            for channel_name in channel_names:
+                names.append(self._format_lagged_name(channel_name, lag))
 
         return names
     
@@ -100,11 +101,11 @@ class NVAR:
     
     @property
     def _max_lag(self):
-        return (self.delay - 1) * np.max(self.strides)
+        return max(self._lags)
     
     @property
     def valid_index(self):
-        return (self.delay - 1) * max(self.strides)
+        return self._max_lag
 
     
     def _build_poly_indices(self):
@@ -188,7 +189,7 @@ class NVAR:
         """
         x_t = np.asarray(x_t)
         if x_t.ndim != 1:
-            raise IndexError(f"mauvaise shape : expected [n_dims] : got {x_t.shape}")
+            raise IndexError(f"mauvaise shape : expected [n_dims, ] : got {x_t.shape}")
         
         if not self.is_initialised:
             self.n_dims_input = x_t.shape[0]
@@ -204,10 +205,8 @@ class NVAR:
             return None
 
         linear_features = []
-        for d in range(self.delay):
-            for stride in self.strides:
-                lag = d * stride
-                linear_features.append(self._history[-1 - lag])
+        for lag in self._lags:
+            linear_features.append(self._history[-1 - lag])
         
         linear_features = np.concatenate(linear_features)
         z_t = self._features_from_linear(linear_features)
